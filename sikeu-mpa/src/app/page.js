@@ -24,7 +24,8 @@ import {
   ChevronRight,
   Calendar as CalendarIcon,
   PenTool,
-  Eraser
+  Eraser,
+  Tent // Icon untuk Kegiatan (Makrab, dll)
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -48,7 +49,7 @@ import {
   serverTimestamp,
   orderBy,
   where,
-  getDocs // Ditambahkan untuk query manual saat hapus
+  getDocs 
 } from 'firebase/firestore';
 
 // --- FIREBASE CONFIGURATION ---
@@ -184,11 +185,8 @@ const SignaturePad = () => {
         const canvas = canvasRef.current;
         if(!canvas) return;
         const ctx = canvas.getContext('2d');
-        
-        // Set canvas size
         canvas.width = 300;
         canvas.height = 150;
-        
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
         ctx.lineCap = 'round';
@@ -198,11 +196,8 @@ const SignaturePad = () => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const rect = canvas.getBoundingClientRect();
-        
-        // Handle both mouse and touch
         const clientX = e.clientX || (e.touches && e.touches[0].clientX);
         const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-
         ctx.beginPath();
         ctx.moveTo(clientX - rect.left, clientY - rect.top);
         setIsDrawing(true);
@@ -213,10 +208,8 @@ const SignaturePad = () => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const rect = canvas.getBoundingClientRect();
-
         const clientX = e.clientX || (e.touches && e.touches[0].clientX);
         const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-
         ctx.lineTo(clientX - rect.left, clientY - rect.top);
         ctx.stroke();
     };
@@ -234,26 +227,12 @@ const SignaturePad = () => {
     return (
         <div className="flex flex-col items-center">
             <div className="border-2 border-slate-300 border-dashed rounded-lg bg-white overflow-hidden cursor-crosshair touch-none relative">
-                <canvas
-                    ref={canvasRef}
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={endDrawing}
-                    onMouseLeave={endDrawing}
-                    onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={endDrawing}
-                    className="block"
-                />
+                <canvas ref={canvasRef} onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={endDrawing} onMouseLeave={endDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={endDrawing} className="block" />
                 <div className="absolute top-2 right-2">
-                    <button onClick={clearSignature} className="p-1 bg-rose-100 text-rose-600 rounded-md hover:bg-rose-200" title="Hapus Tanda Tangan">
-                        <Eraser size={16}/>
-                    </button>
+                    <button onClick={clearSignature} className="p-1 bg-rose-100 text-rose-600 rounded-md hover:bg-rose-200" title="Hapus Tanda Tangan"><Eraser size={16}/></button>
                 </div>
             </div>
-            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1 print:hidden">
-                <PenTool size={12}/> Tanda tangan di area kotak di atas
-            </p>
+            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1 print:hidden"><PenTool size={12}/> Tanda tangan di area kotak di atas</p>
         </div>
     );
 };
@@ -337,10 +316,10 @@ const Header = ({ currentView, setView, isAdmin, handleLogout }) => {
   );
 };
 
-// --- ADMIN FEATURES ---
+// --- FEATURE COMPONENTS ---
 
 // 1. DASHBOARD OVERVIEW
-const DashboardOverview = ({ transactions, members }) => {
+const DashboardOverview = ({ transactions }) => {
   const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + Number(curr.amount), 0);
   const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + Number(curr.amount), 0);
   const balance = income - expense;
@@ -446,9 +425,8 @@ const KasManager = ({ db, appId, user }) => {
     const existing = cashRecords.find(r => r.memberId === memberId && r.monthIndex === monthIndex && r.year === currentYear);
     
     if (existing) {
-        // UNCHECK: Hapus Cash Record DAN Transaksi terkait
+        // UNCHECK
         try {
-            // Find transaction by ID (if saved)
             if(existing.transactionId) {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', existing.transactionId));
             }
@@ -458,11 +436,11 @@ const KasManager = ({ db, appId, user }) => {
             alert("Gagal membatalkan pembayaran.");
         }
     } else {
-        // CHECK: Tambah Cash Record DAN Transaksi
+        // CHECK
         try {
             const transRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
                 type: 'income',
-                amount: 10000, 
+                amount: 5000, 
                 description: `Uang Kas ${months[monthIndex]} ${currentYear} - ${memberName}`,
                 date: new Date().toISOString().split('T')[0],
                 category: 'Uang Kas',
@@ -485,65 +463,225 @@ const KasManager = ({ db, appId, user }) => {
   };
 
   return (
-    <div className="space-y-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><Users size={20}/> Kelola Anggota & Kas ({currentYear})</h3>
-            
-            <form onSubmit={addMember} className="flex gap-2 mb-6">
-                <input 
-                    type="text" 
-                    placeholder="Nama Anggota Baru..." 
-                    className="flex-1 p-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={newMemberName}
-                    onChange={(e) => setNewMemberName(e.target.value)}
-                />
-                <button disabled={loading} className="bg-blue-700 text-white px-6 rounded-xl font-bold hover:bg-blue-800 transition-colors">
-                    <Plus size={20}/>
-                </button>
-            </form>
+    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><Users size={20}/> Kelola Anggota & Kas ({currentYear})</h3>
+        
+        <form onSubmit={addMember} className="flex gap-2 mb-6">
+            <input 
+                type="text" 
+                placeholder="Nama Anggota Baru..." 
+                className="flex-1 p-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={newMemberName}
+                onChange={(e) => setNewMemberName(e.target.value)}
+            />
+            <button disabled={loading} className="bg-blue-700 text-white px-6 rounded-xl font-bold hover:bg-blue-800 transition-colors">
+                <Plus size={20}/>
+            </button>
+        </form>
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-50 text-slate-600 font-bold">
-                        <tr>
-                            <th className="p-3 rounded-tl-xl">Nama</th>
-                            {months.map(m => <th key={m} className="p-3 text-center">{m}</th>)}
-                            <th className="p-3 rounded-tr-xl">Aksi</th>
+        <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-600 font-bold">
+                    <tr>
+                        <th className="p-3 rounded-tl-xl">Nama</th>
+                        {months.map(m => <th key={m} className="p-3 text-center">{m}</th>)}
+                        <th className="p-3 rounded-tr-xl">Aksi</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {members.map(member => (
+                        <tr key={member.id} className="hover:bg-slate-50/50">
+                            <td className="p-3 font-medium text-slate-800">{member.name}</td>
+                            {months.map((_, idx) => {
+                                const isPaid = cashRecords.some(r => r.memberId === member.id && r.monthIndex === idx);
+                                return (
+                                    <td key={idx} className="p-3 text-center">
+                                        <button 
+                                            onClick={() => togglePayment(member.id, idx)}
+                                            className={`w-6 h-6 rounded-full border flex items-center justify-center transition-all ${isPaid ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-blue-400'}`}
+                                            title={isPaid ? "Batalkan" : "Bayar"}
+                                        >
+                                            <div className="w-2 h-2 bg-current rounded-full" />
+                                        </button>
+                                    </td>
+                                );
+                            })}
+                            <td className="p-3">
+                                <button onClick={() => deleteMember(member.id)} className="text-slate-400 hover:text-rose-500"><Trash2 size={16}/></button>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {members.map(member => (
-                            <tr key={member.id} className="hover:bg-slate-50/50">
-                                <td className="p-3 font-medium text-slate-800">{member.name}</td>
-                                {months.map((_, idx) => {
-                                    const isPaid = cashRecords.some(r => r.memberId === member.id && r.monthIndex === idx);
-                                    return (
-                                        <td key={idx} className="p-3 text-center">
-                                            <button 
-                                                onClick={() => togglePayment(member.id, idx)}
-                                                className={`w-6 h-6 rounded-full border flex items-center justify-center transition-all ${isPaid ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-blue-400'}`}
-                                                title={isPaid ? "Batalkan pembayaran (Hapus Transaksi)" : "Bayar (Catat Transaksi)"}
-                                            >
-                                                <div className="w-2 h-2 bg-current rounded-full" />
-                                            </button>
-                                        </td>
-                                    );
-                                })}
-                                <td className="p-3">
-                                    <button onClick={() => deleteMember(member.id)} className="text-slate-400 hover:text-rose-500"><Trash2 size={16}/></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-            <p className="mt-4 text-xs text-slate-400">* Klik lingkaran untuk menandai lunas. Pemasukan otomatis tercatat di transaksi. Klik lagi untuk membatalkan (transaksi juga akan terhapus).</p>
+                    ))}
+                </tbody>
+            </table>
         </div>
+        <p className="mt-4 text-xs text-slate-400">* Klik lingkaran untuk menandai lunas. Pemasukan otomatis tercatat di transaksi.</p>
     </div>
   );
 };
 
-// 3. TRANSAKSI MANAGER & CALENDAR
+// 3. ACTIVITY MANAGER (NEW FEATURE)
+const ActivityManager = ({ db, appId, user }) => {
+    const [activities, setActivities] = useState([]);
+    const [members, setMembers] = useState([]);
+    const [payments, setPayments] = useState([]); // Stores who paid for which activity
+    const [selectedActivity, setSelectedActivity] = useState(null); // For detail view
+    
+    // Form States
+    const [newActName, setNewActName] = useState('');
+    const [newActDate, setNewActDate] = useState('');
+    const [newActNominal, setNewActNominal] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!db || !user) return;
+
+        // Fetch Activities
+        const qAct = query(collection(db, 'artifacts', appId, 'public', 'data', 'activities'), orderBy('date', 'desc'));
+        const unsubAct = onSnapshot(qAct, (snap) => setActivities(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+
+        // Fetch Members
+        const qMem = query(collection(db, 'artifacts', appId, 'public', 'data', 'members'), orderBy('name'));
+        const unsubMem = onSnapshot(qMem, (snap) => setMembers(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+
+        // Fetch Activity Payments
+        const qPay = query(collection(db, 'artifacts', appId, 'public', 'data', 'activity_payments'));
+        const unsubPay = onSnapshot(qPay, (snap) => setPayments(snap.docs.map(d => ({id: d.id, ...d.data()}))));
+
+        return () => { unsubAct(); unsubMem(); unsubPay(); };
+    }, [db, user]);
+
+    const handleAddActivity = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'activities'), {
+            name: newActName,
+            date: newActDate,
+            nominal: Number(newActNominal),
+            created_at: serverTimestamp()
+        });
+        setNewActName(''); setNewActDate(''); setNewActNominal('');
+        setLoading(false);
+    };
+
+    const handleDeleteActivity = async (id) => {
+        if(window.confirm("Hapus kegiatan ini?")) {
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'activities', id));
+            // Ideally should cleanup payments too, but keep simple for now
+            setSelectedActivity(null);
+        }
+    };
+
+    const handleTogglePayment = async (memberId) => {
+        if(!selectedActivity) return;
+        const memberName = members.find(m => m.id === memberId)?.name;
+        
+        const existing = payments.find(p => p.activityId === selectedActivity.id && p.memberId === memberId);
+
+        if(existing) {
+            // UNPAY: Delete payment record AND transaction
+            if(existing.transactionId) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', existing.transactionId));
+            }
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'activity_payments', existing.id));
+        } else {
+            // PAY: Create transaction first, then payment record
+            const transRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
+                type: 'income',
+                amount: Number(selectedActivity.nominal),
+                description: `Patungan ${selectedActivity.name} - ${memberName}`,
+                date: new Date().toISOString().split('T')[0],
+                category: 'Kegiatan',
+                refType: 'activity_auto', // Marked for auto-sync
+                created_at: serverTimestamp()
+            });
+
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'activity_payments'), {
+                activityId: selectedActivity.id,
+                memberId: memberId,
+                transactionId: transRef.id,
+                paidAt: serverTimestamp()
+            });
+        }
+    };
+
+    return (
+        <div className="space-y-8">
+            {/* Create Activity Section */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><Tent size={20}/> Buat Kegiatan Baru</h3>
+                <form onSubmit={handleAddActivity} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <input type="text" required placeholder="Nama Kegiatan (e.g. Makrab)" className="p-3 border border-slate-200 rounded-xl" value={newActName} onChange={e => setNewActName(e.target.value)} />
+                    <input type="date" required className="p-3 border border-slate-200 rounded-xl" value={newActDate} onChange={e => setNewActDate(e.target.value)} />
+                    <input type="number" required placeholder="Nominal Patungan" className="p-3 border border-slate-200 rounded-xl" value={newActNominal} onChange={e => setNewActNominal(e.target.value)} />
+                    <button disabled={loading} className="bg-blue-800 text-white font-bold rounded-xl hover:bg-blue-900 transition-colors">Buat Kegiatan</button>
+                </form>
+            </div>
+
+            {/* List Activities */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {activities.map(act => {
+                    const paidCount = payments.filter(p => p.activityId === act.id).length;
+                    const totalCollected = paidCount * act.nominal;
+                    return (
+                        <div key={act.id} className={`bg-white p-5 rounded-2xl border shadow-sm cursor-pointer transition-all hover:border-blue-400 ${selectedActivity?.id === act.id ? 'ring-2 ring-blue-500 border-blue-500' : 'border-slate-200'}`} onClick={() => setSelectedActivity(act)}>
+                            <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-slate-800">{act.name}</h4>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(act.id); }} className="text-slate-400 hover:text-rose-500"><Trash2 size={16}/></button>
+                            </div>
+                            <p className="text-sm text-slate-500 mb-4 flex items-center gap-2"><CalendarIcon size={14}/> {act.date}</p>
+                            <div className="bg-slate-50 p-3 rounded-xl mb-3">
+                                <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                                    <span>Terkumpul</span>
+                                    <span className="text-emerald-600">{formatRupiah(totalCollected)}</span>
+                                </div>
+                                <div className="w-full bg-slate-200 rounded-full h-2">
+                                    <div className="bg-emerald-500 h-2 rounded-full transition-all" style={{width: `${Math.min((paidCount / (members.length || 1)) * 100, 100)}%`}}></div>
+                                </div>
+                                <div className="text-[10px] text-right mt-1 text-slate-400">{paidCount} / {members.length} Anggota</div>
+                            </div>
+                            <div className="text-center text-sm font-bold text-blue-600">
+                                Kelola Patungan &rarr;
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+
+            {/* Activity Details (Checklist) */}
+            {selectedActivity && (
+                <div className="bg-white p-6 rounded-2xl border border-blue-200 shadow-lg animate-fade-in">
+                    <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-100">
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-900">Daftar Patungan: {selectedActivity.name}</h3>
+                            <p className="text-slate-500">Nominal: {formatRupiah(selectedActivity.nominal)} / orang</p>
+                        </div>
+                        <button onClick={() => setSelectedActivity(null)} className="p-2 hover:bg-slate-100 rounded-full"><X size={20}/></button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {members.map(m => {
+                            const isPaid = payments.some(p => p.activityId === selectedActivity.id && p.memberId === m.id);
+                            return (
+                                <div 
+                                    key={m.id} 
+                                    onClick={() => handleTogglePayment(m.id)}
+                                    className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${isPaid ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200 hover:border-blue-400'}`}
+                                >
+                                    <span className={`text-sm font-bold ${isPaid ? 'text-emerald-800' : 'text-slate-700'}`}>{m.name}</span>
+                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center border ${isPaid ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300'}`}>
+                                        {isPaid && <CheckCircle size={14}/>}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 4. TRANSAKSI MANAGER & CALENDAR
 const TransactionManager = ({ db, appId, user }) => {
   const [transactions, setTransactions] = useState([]);
   const [form, setForm] = useState({ type: 'expense', amount: '', description: '', date: new Date().toISOString().split('T')[0] });
@@ -572,28 +710,27 @@ const TransactionManager = ({ db, appId, user }) => {
     setLoading(false);
   };
 
-  // --- BUG FIX: SYNC DELETE ---
-  // When deleting a transaction, check if it's a cash_auto type. If so, find and delete the associated cash record.
   const deleteTrans = async (item) => {
-      const confirmMsg = item.refType === 'cash_auto' 
-        ? 'PERINGATAN: Ini adalah Uang Kas. Menghapus ini akan membatalkan status lunas di tabel kas. Lanjutkan?'
-        : 'Hapus transaksi ini?';
+      let confirmMsg = 'Hapus transaksi ini?';
+      if (item.refType === 'cash_auto') confirmMsg = 'PERINGATAN: Ini adalah Uang Kas Otomatis. Menghapus ini akan membatalkan status lunas di tabel kas.';
+      if (item.refType === 'activity_auto') confirmMsg = 'PERINGATAN: Ini adalah Patungan Kegiatan. Menghapus ini akan membatalkan status lunas di daftar kegiatan.';
 
       if(window.confirm(confirmMsg)) {
           try {
-              // 1. Delete the transaction itself
               await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', item.id));
 
-              // 2. If it's a cash payment, find the linked cash_record and delete it to uncheck the dot
+              // SYNC DELETE: CASH
               if (item.refType === 'cash_auto') {
-                  const qCash = query(
-                      collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), 
-                      where('transactionId', '==', item.id)
-                  );
+                  const qCash = query(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), where('transactionId', '==', item.id));
                   const snapshot = await getDocs(qCash);
-                  snapshot.forEach(async (d) => {
-                      await deleteDoc(d.ref);
-                  });
+                  snapshot.forEach(async (d) => await deleteDoc(d.ref));
+              }
+
+              // SYNC DELETE: ACTIVITY
+              if (item.refType === 'activity_auto') {
+                  const qAct = query(collection(db, 'artifacts', appId, 'public', 'data', 'activity_payments'), where('transactionId', '==', item.id));
+                  const snapshot = await getDocs(qAct);
+                  snapshot.forEach(async (d) => await deleteDoc(d.ref));
               }
           } catch (e) {
               console.error("Error deleting:", e);
@@ -649,9 +786,7 @@ const TransactionManager = ({ db, appId, user }) => {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Col: Calendar & Form */}
         <div className="lg:col-span-1 space-y-6">
-            {/* Calendar */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2"><CalendarIcon size={18}/> Kalender</h3>
@@ -674,7 +809,6 @@ const TransactionManager = ({ db, appId, user }) => {
                 )}
             </div>
 
-            {/* Form */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><DollarSign size={20}/> Input Transaksi</h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -704,7 +838,6 @@ const TransactionManager = ({ db, appId, user }) => {
             </div>
         </div>
 
-        {/* Right Col: List */}
         <div className="lg:col-span-2">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-full flex flex-col">
                 <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
@@ -729,7 +862,8 @@ const TransactionManager = ({ db, appId, user }) => {
                                     <td className="p-4 text-slate-500 whitespace-nowrap align-top">{t.date}</td>
                                     <td className="p-4 font-medium text-slate-800 align-top">
                                         {t.description}
-                                        {t.refType === 'cash_auto' && <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 font-bold">AUTO</span>}
+                                        {t.refType === 'cash_auto' && <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 font-bold">KAS</span>}
+                                        {t.refType === 'activity_auto' && <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700 font-bold">KEGIATAN</span>}
                                     </td>
                                     <td className={`p-4 text-right font-bold align-top ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                                         {t.type === 'income' ? '+' : '-'} {formatRupiah(t.amount)}
@@ -761,7 +895,7 @@ const TransactionManager = ({ db, appId, user }) => {
   );
 };
 
-// 4. REPORT MANAGER (UPDATED: Modern Dot Matrix + Signature Canvas)
+// 5. REPORT MANAGER (UPDATED)
 const ReportManager = ({ transactions, members, cashRecords }) => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const currentYear = new Date().getFullYear();
@@ -769,7 +903,6 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
     const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + Number(curr.amount), 0);
     const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + Number(curr.amount), 0);
 
-    // DYNAMIC DATE FOR REPORT
     const reportDate = new Date().toLocaleDateString('id-ID', {
         day: 'numeric',
         month: 'long',
@@ -782,7 +915,6 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
 
     return (
         <div className="space-y-8">
-            {/* PRINT BUTTON & INFO (Hidden when printing) */}
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm text-center print:hidden">
                 <div className="mx-auto w-20 h-20 bg-blue-50 text-blue-700 rounded-full flex items-center justify-center mb-4">
                     <Printer size={32}/>
@@ -795,42 +927,22 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                     <p className="text-sm font-bold text-slate-700 mb-2">Instruksi Tanda Tangan:</p>
                     <p className="text-xs text-slate-500">Silakan tanda tangan pada kotak di bawah ini sebelum mencetak.</p>
                 </div>
-                <button 
-                    onClick={handlePrint}
-                    className="bg-blue-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-900 transition-colors flex items-center gap-2 mx-auto shadow-lg shadow-blue-900/20"
-                >
+                <button onClick={handlePrint} className="bg-blue-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-900 transition-colors flex items-center gap-2 mx-auto shadow-lg shadow-blue-900/20">
                     <FileDown size={20}/> Cetak / Simpan PDF
                 </button>
             </div>
 
-            {/* REPORT CONTENT (Visible on screen and print) */}
             <div className="bg-white p-8 rounded-none shadow-none print:p-0 print:shadow-none font-mono text-slate-800" id="print-area">
-                
-                {/* STYLES FOR PRINT ONLY */}
                 <style jsx global>{`
                     @media print {
                         @page { size: A4; margin: 15mm; }
-                        body * {
-                            visibility: hidden;
-                        }
-                        #print-area, #print-area * {
-                            visibility: visible;
-                        }
-                        #print-area {
-                            position: absolute;
-                            left: 0;
-                            top: 0;
-                            width: 100%;
-                            font-family: 'Courier New', Courier, monospace;
-                            font-size: 11px;
-                        }
-                        nav, header, footer, .print\\:hidden {
-                            display: none !important;
-                        }
+                        body * { visibility: hidden; }
+                        #print-area, #print-area * { visibility: visible; }
+                        #print-area { position: absolute; left: 0; top: 0; width: 100%; font-family: 'Courier New', Courier, monospace; font-size: 11px; }
+                        nav, header, footer, .print\\:hidden { display: none !important; }
                     }
                 `}</style>
 
-                {/* HEADER DOT MATRIX STYLE */}
                 <div className="text-center mb-6 border-b-2 border-dashed border-slate-400 pb-6">
                     <h1 className="text-xl font-bold tracking-widest uppercase">LAPORAN KEUANGAN</h1>
                     <h2 className="text-lg font-bold">MPA HIMAKOM POLBAN</h2>
@@ -838,30 +950,19 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                     <p className="text-xs text-slate-500 mt-1">Dicetak pada: {new Date().toLocaleString('id-ID')}</p>
                 </div>
 
-                {/* A. RINGKASAN */}
                 <div className="mb-8">
                     <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full flex justify-between">
                         <span>A. RINGKASAN</span>
                         <span>[ SUMMARY ]</span>
                     </h2>
                     <div className="grid grid-cols-2 gap-4 text-sm max-w-md">
-                        <div className="flex justify-between">
-                            <span>TOTAL PEMASUKAN</span>
-                            <span className="font-bold">{formatRupiah(income)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                            <span>TOTAL PENGELUARAN</span>
-                            <span className="font-bold">{formatRupiah(expense)}</span>
-                        </div>
+                        <div className="flex justify-between"><span>TOTAL PEMASUKAN</span><span className="font-bold">{formatRupiah(income)}</span></div>
+                        <div className="flex justify-between"><span>TOTAL PENGELUARAN</span><span className="font-bold">{formatRupiah(expense)}</span></div>
                         <div className="col-span-2 border-t border-dashed border-slate-300 my-1"></div>
-                        <div className="flex justify-between col-span-2 text-lg">
-                            <span className="font-bold">SALDO AKHIR</span>
-                            <span className="font-bold">{formatRupiah(income - expense)}</span>
-                        </div>
+                        <div className="flex justify-between col-span-2 text-lg"><span className="font-bold">SALDO AKHIR</span><span className="font-bold">{formatRupiah(income - expense)}</span></div>
                     </div>
                 </div>
 
-                {/* B. REKAP KAS */}
                 <div className="mb-8 break-inside-avoid">
                     <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full">B. DATA UANG KAS</h2>
                     <table className="w-full text-[10px] border-collapse">
@@ -877,20 +978,14 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                                     <td className="p-1 font-bold">{m.name}</td>
                                     {months.map((_, idx) => {
                                         const isPaid = cashRecords.some(r => r.memberId === m.id && r.monthIndex === idx);
-                                        return (
-                                            <td key={idx} className="p-1 text-center font-bold">
-                                                {isPaid ? 'X' : '.'}
-                                            </td>
-                                        );
+                                        return <td key={idx} className="p-1 text-center font-bold">{isPaid ? 'X' : '.'}</td>;
                                     })}
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                    <p className="text-[10px] mt-1 italic text-slate-500">* Tanda 'X' berarti lunas.</p>
                 </div>
 
-                {/* C. JURNAL */}
                 <div className="mb-8">
                     <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full">C. RIWAYAT TRANSAKSI</h2>
                     <table className="w-full text-[10px] border-collapse">
@@ -907,9 +1002,7 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                                 <tr key={t.id} className="border-b border-dashed border-slate-200">
                                     <td className="p-2 whitespace-nowrap">{t.date}</td>
                                     <td className="p-2">{t.description}</td>
-                                    <td className={`p-2 text-center uppercase ${t.type === 'income' ? 'font-bold' : ''}`}>
-                                        {t.type === 'income' ? 'IN' : 'OUT'}
-                                    </td>
+                                    <td className={`p-2 text-center uppercase ${t.type === 'income' ? 'font-bold' : ''}`}>{t.type === 'income' ? 'IN' : 'OUT'}</td>
                                     <td className="p-2 text-right font-medium">{formatRupiah(t.amount)}</td>
                                 </tr>
                             ))}
@@ -917,34 +1010,20 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                     </table>
                 </div>
 
-                {/* SIGNATURE */}
                 <div className="mt-16 flex justify-end break-inside-avoid text-xs">
                     <div className="text-center w-64">
-                        {/* AUTO DATE HERE */}
                         <p className="mb-4">Bandung, {reportDate}</p>
                         <p className="mb-2 font-bold">KETUA MPA HIMAKOM POLBAN,</p>
-                        
-                        {/* SIGNATURE CANVAS */}
-                        <div className="mb-2 flex justify-center">
-                            <SignaturePad />
-                        </div>
-
-                        <p className="font-bold border-b border-dashed border-slate-900 inline-block pb-1 min-w-[200px] uppercase">
-                            Wyandhanu Maulidan Nugraha
-                        </p>
+                        <div className="mb-2 flex justify-center"><SignaturePad /></div>
+                        <p className="font-bold border-b border-dashed border-slate-900 inline-block pb-1 min-w-[200px] uppercase">Wyandhanu Maulidan Nugraha</p>
                     </div>
                 </div>
-                
-                <div className="text-[8px] text-center mt-10 text-slate-400 border-t border-slate-200 pt-2">
-                    --- DOKUMEN INI DIHASILKAN SECARA OTOMATIS OLEH SIKEU MPA ---
-                </div>
-
             </div>
         </div>
     );
 };
 
-// 5. MAIN DASHBOARD CONTAINER
+// 6. MAIN DASHBOARD CONTAINER
 const AdminDashboard = ({ db, appId, user }) => {
   const [tab, setTab] = useState('overview'); 
   const [transactions, setTransactions] = useState([]);
@@ -960,7 +1039,6 @@ const AdminDashboard = ({ db, appId, user }) => {
     const qM = query(collection(db, 'artifacts', appId, 'public', 'data', 'members'), orderBy('name'));
     const unsubM = onSnapshot(qM, (snap) => setMembers(snap.docs.map(d => ({id:d.id, ...d.data()}))), (err) => console.log("Waiting..."));
 
-    // Need cash records for the report too
     const currentYear = new Date().getFullYear();
     const qC = query(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), where('year', '==', currentYear));
     const unsubC = onSnapshot(qC, (snap) => setCashRecords(snap.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.log("Waiting..."));
@@ -975,8 +1053,9 @@ const AdminDashboard = ({ db, appId, user }) => {
                 {[
                     {id: 'overview', label: 'Ringkasan', icon: LayoutDashboard},
                     {id: 'kas', label: 'Uang Kas', icon: Users},
+                    {id: 'activity', label: 'Kegiatan', icon: Tent}, // Added Tab
                     {id: 'transactions', label: 'Jurnal', icon: FileText},
-                    {id: 'report', label: 'Laporan', icon: Printer}, // NEW TAB
+                    {id: 'report', label: 'Laporan', icon: Printer},
                 ].map(item => (
                     <button 
                         key={item.id}
@@ -991,6 +1070,7 @@ const AdminDashboard = ({ db, appId, user }) => {
             <div className="animate-fade-in">
                 {tab === 'overview' && <DashboardOverview transactions={transactions} members={members} />}
                 {tab === 'kas' && <KasManager db={db} appId={appId} user={user} />}
+                {tab === 'activity' && <ActivityManager db={db} appId={appId} user={user} />}
                 {tab === 'transactions' && <TransactionManager db={db} appId={appId} user={user} />}
                 {tab === 'report' && <ReportManager transactions={transactions} members={members} cashRecords={cashRecords} />}
             </div>
@@ -998,6 +1078,8 @@ const AdminDashboard = ({ db, appId, user }) => {
     </div>
   );
 };
+
+// ... (Login & Hero & App remain the same as previous)
 
 // --- LOGIN PAGE ---
 const AdminLogin = ({ auth, onLoginSuccess }) => {
@@ -1063,7 +1145,8 @@ const Hero = ({ setView, db, appId, user }) => {
   }, [db, user]);
 
   return (
-    <div className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden flex flex-col justify-center min-h-[80vh]">
+    <div className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden flex flex-col justify-between min-h-screen">
+      {/* Background blobs */}
       <div className="absolute top-0 right-0 w-1/2 h-full bg-blue-600/5 skew-x-12 blur-3xl -z-10" />
       <div className="absolute bottom-0 left-0 w-1/3 h-2/3 bg-sky-400/5 -skew-x-12 blur-3xl -z-10" />
       
@@ -1081,15 +1164,33 @@ const Hero = ({ setView, db, appId, user }) => {
         <p className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto mb-12 leading-relaxed">
           Platform terintegrasi untuk pengelolaan uang kas, pencatatan transaksi, dan pelaporan keuangan internal organisasi secara real-time.
         </p>
+      </div>
 
-        <div className="max-w-md mx-auto bg-white/80 backdrop-blur-md p-8 rounded-3xl border border-slate-200 shadow-xl animate-scale-in">
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">Total Kas Saat Ini</p>
-            <div className="text-4xl font-black text-blue-800 mb-4">
-                {totalBalance !== null ? formatRupiah(totalBalance) : 'Memuat...'}
-            </div>
-            <div className="h-1 w-20 bg-blue-200 mx-auto rounded-full mb-4"></div>
-            <p className="text-xs text-slate-500">Data diperbarui secara real-time dari sistem bendahara.</p>
-        </div>
+      {/* Hero Image Section */}
+      <div className="relative w-full max-w-md mx-auto mt-auto flex flex-col items-center">
+         
+         {/* LABEL NAMA */}
+         <div className="mb-4 text-center animate-fade-in-up z-20">
+            <h3 className="text-2xl font-bold text-slate-800 tracking-tight">Rahma Attaya</h3>
+            <p className="text-xs font-bold text-blue-600 bg-blue-50 px-4 py-1.5 rounded-full border border-blue-100 inline-block mt-1 shadow-sm">
+              Staf Ahli Bendahara
+            </p>
+         </div>
+
+         {/* Foto Teman/Ketua */}
+         <img 
+            src="/foto-hero.png" // User needs to rename their file to this
+            alt="Hero Image" 
+            className="w-full h-auto object-cover mask-image-gradient relative z-10"
+            style={{
+                maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 85%, rgba(0,0,0,0) 100%)',
+                WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 85%, rgba(0,0,0,0) 100%)'
+            }}
+            onError={(e) => {
+                e.target.style.display = 'none'; // Hide if missing
+                // Or show a placeholder div
+            }}
+         />
       </div>
     </div>
   );
