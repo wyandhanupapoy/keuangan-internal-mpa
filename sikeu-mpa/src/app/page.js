@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Wallet, 
   TrendingUp, 
@@ -22,7 +22,9 @@ import {
   Printer,
   ChevronLeft,
   ChevronRight,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  PenTool,
+  Eraser
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -42,12 +44,11 @@ import {
   query, 
   onSnapshot, 
   doc, 
-  updateDoc, 
   deleteDoc, 
   serverTimestamp,
   orderBy,
   where,
-  getDoc
+  getDocs // Ditambahkan untuk query manual saat hapus
 } from 'firebase/firestore';
 
 // --- FIREBASE CONFIGURATION ---
@@ -174,6 +175,89 @@ const ParticleBackground = () => {
   return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full -z-10 pointer-events-none opacity-60" />;
 };
 
+// --- COMPONENT: Signature Pad ---
+const SignaturePad = () => {
+    const canvasRef = useRef(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if(!canvas) return;
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 300;
+        canvas.height = 150;
+        
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+    }, []);
+
+    const startDrawing = (e) => {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        
+        // Handle both mouse and touch
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+
+        ctx.beginPath();
+        ctx.moveTo(clientX - rect.left, clientY - rect.top);
+        setIsDrawing(true);
+    };
+
+    const draw = (e) => {
+        if (!isDrawing) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+
+        ctx.lineTo(clientX - rect.left, clientY - rect.top);
+        ctx.stroke();
+    };
+
+    const endDrawing = () => {
+        setIsDrawing(false);
+    };
+
+    const clearSignature = () => {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    return (
+        <div className="flex flex-col items-center">
+            <div className="border-2 border-slate-300 border-dashed rounded-lg bg-white overflow-hidden cursor-crosshair touch-none relative">
+                <canvas
+                    ref={canvasRef}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={endDrawing}
+                    onMouseLeave={endDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={endDrawing}
+                    className="block"
+                />
+                <div className="absolute top-2 right-2">
+                    <button onClick={clearSignature} className="p-1 bg-rose-100 text-rose-600 rounded-md hover:bg-rose-200" title="Hapus Tanda Tangan">
+                        <Eraser size={16}/>
+                    </button>
+                </div>
+            </div>
+            <p className="text-xs text-slate-400 mt-2 flex items-center gap-1 print:hidden">
+                <PenTool size={12}/> Tanda tangan di area kotak di atas
+            </p>
+        </div>
+    );
+};
+
 // --- HEADER COMPONENT ---
 const Header = ({ currentView, setView, isAdmin, handleLogout }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -255,6 +339,7 @@ const Header = ({ currentView, setView, isAdmin, handleLogout }) => {
 
 // --- ADMIN FEATURES ---
 
+// 1. DASHBOARD OVERVIEW
 const DashboardOverview = ({ transactions, members }) => {
   const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + Number(curr.amount), 0);
   const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + Number(curr.amount), 0);
@@ -363,6 +448,7 @@ const KasManager = ({ db, appId, user }) => {
     if (existing) {
         // UNCHECK: Hapus Cash Record DAN Transaksi terkait
         try {
+            // Find transaction by ID (if saved)
             if(existing.transactionId) {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', existing.transactionId));
             }
@@ -374,24 +460,22 @@ const KasManager = ({ db, appId, user }) => {
     } else {
         // CHECK: Tambah Cash Record DAN Transaksi
         try {
-            // 1. Buat Transaksi dulu untuk dapat ID
             const transRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
                 type: 'income',
                 amount: 10000, 
                 description: `Uang Kas ${months[monthIndex]} ${currentYear} - ${memberName}`,
                 date: new Date().toISOString().split('T')[0],
                 category: 'Uang Kas',
-                refType: 'cash_auto', // Penanda ini otomatis
+                refType: 'cash_auto', 
                 created_at: serverTimestamp()
             });
 
-            // 2. Simpan ID Transaksi di Cash Record
             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), {
                 memberId, 
                 monthIndex, 
                 year: currentYear, 
                 paidAt: serverTimestamp(),
-                transactionId: transRef.id // LINKING
+                transactionId: transRef.id 
             });
         } catch (e) {
             console.error("Error processing payment:", e);
@@ -464,8 +548,8 @@ const TransactionManager = ({ db, appId, user }) => {
   const [transactions, setTransactions] = useState([]);
   const [form, setForm] = useState({ type: 'expense', amount: '', description: '', date: new Date().toISOString().split('T')[0] });
   const [loading, setLoading] = useState(false);
-  const [filterDate, setFilterDate] = useState(null); // Filter by date from calendar
-  const [calendarDate, setCalendarDate] = useState(new Date()); // Current month viewed in calendar
+  const [filterDate, setFilterDate] = useState(null); 
+  const [calendarDate, setCalendarDate] = useState(new Date()); 
 
   useEffect(() => {
     if (!db || !user) return; 
@@ -488,14 +572,33 @@ const TransactionManager = ({ db, appId, user }) => {
     setLoading(false);
   };
 
+  // --- BUG FIX: SYNC DELETE ---
+  // When deleting a transaction, check if it's a cash_auto type. If so, find and delete the associated cash record.
   const deleteTrans = async (item) => {
-      // Warning extra if it's an auto-generated cash record
       const confirmMsg = item.refType === 'cash_auto' 
-        ? 'PERINGATAN: Ini adalah transaksi Uang Kas Otomatis. Menghapusnya di sini TIDAK mengubah status lunas di tabel kas (tidak disarankan). Lanjutkan?'
+        ? 'PERINGATAN: Ini adalah Uang Kas. Menghapus ini akan membatalkan status lunas di tabel kas. Lanjutkan?'
         : 'Hapus transaksi ini?';
 
       if(window.confirm(confirmMsg)) {
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', item.id));
+          try {
+              // 1. Delete the transaction itself
+              await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', item.id));
+
+              // 2. If it's a cash payment, find the linked cash_record and delete it to uncheck the dot
+              if (item.refType === 'cash_auto') {
+                  const qCash = query(
+                      collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), 
+                      where('transactionId', '==', item.id)
+                  );
+                  const snapshot = await getDocs(qCash);
+                  snapshot.forEach(async (d) => {
+                      await deleteDoc(d.ref);
+                  });
+              }
+          } catch (e) {
+              console.error("Error deleting:", e);
+              alert("Gagal menghapus data.");
+          }
       }
   };
 
@@ -510,15 +613,12 @@ const TransactionManager = ({ db, appId, user }) => {
       const firstDay = getFirstDayOfMonth(year, month);
       const days = [];
 
-      // Empty slots
       for (let i = 0; i < firstDay; i++) {
           days.push(<div key={`empty-${i}`} className="h-10"></div>);
       }
 
-      // Days
       for (let day = 1; day <= daysInMonth; day++) {
           const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const hasTrans = transactions.some(t => t.date === dateStr);
           const hasIncome = transactions.some(t => t.date === dateStr && t.type === 'income');
           const hasExpense = transactions.some(t => t.date === dateStr && t.type === 'expense');
           const isSelected = filterDate === dateStr;
@@ -533,12 +633,10 @@ const TransactionManager = ({ db, appId, user }) => {
                 `}
               >
                   {day}
-                  {hasTrans && (
-                      <div className="flex gap-0.5 mt-0.5">
-                          {hasIncome && <div className="w-1 h-1 rounded-full bg-emerald-500"></div>}
-                          {hasExpense && <div className="w-1 h-1 rounded-full bg-rose-500"></div>}
-                      </div>
-                  )}
+                  <div className="flex gap-0.5 mt-0.5">
+                      {hasIncome && <div className="w-1 h-1 rounded-full bg-emerald-500"></div>}
+                      {hasExpense && <div className="w-1 h-1 rounded-full bg-rose-500"></div>}
+                  </div>
               </button>
           );
       }
@@ -564,7 +662,7 @@ const TransactionManager = ({ db, appId, user }) => {
                     </div>
                 </div>
                 <div className="grid grid-cols-7 gap-1 text-center mb-2">
-                    {['M', 'S', 'S', 'R', 'K', 'J', 'S'].map(d => <span key={d} className="text-xs font-bold text-slate-400">{d}</span>)}
+                    {['M', 'S', 'S', 'R', 'K', 'J', 'S'].map((d, i) => <span key={i} className="text-xs font-bold text-slate-400">{d}</span>)}
                 </div>
                 <div className="grid grid-cols-7 gap-1 justify-items-center">
                     {renderCalendar()}
@@ -663,13 +761,20 @@ const TransactionManager = ({ db, appId, user }) => {
   );
 };
 
-// 4. REPORT MANAGER (UPDATED: Modern Dot Matrix Style)
+// 4. REPORT MANAGER (UPDATED: Modern Dot Matrix + Signature Canvas)
 const ReportManager = ({ transactions, members, cashRecords }) => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const currentYear = new Date().getFullYear();
 
     const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + Number(curr.amount), 0);
     const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + Number(curr.amount), 0);
+
+    // DYNAMIC DATE FOR REPORT
+    const reportDate = new Date().toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+    });
 
     const handlePrint = () => {
         window.print();
@@ -686,6 +791,10 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                 <p className="text-slate-500 mb-6 max-w-md mx-auto">
                     Klik tombol di bawah untuk mencetak laporan. Anda dapat menyimpannya sebagai PDF melalui dialog cetak browser (Pilih "Save as PDF").
                 </p>
+                <div className="mb-6 p-4 bg-slate-50 rounded-xl inline-block text-left">
+                    <p className="text-sm font-bold text-slate-700 mb-2">Instruksi Tanda Tangan:</p>
+                    <p className="text-xs text-slate-500">Silakan tanda tangan pada kotak di bawah ini sebelum mencetak.</p>
+                </div>
                 <button 
                     onClick={handlePrint}
                     className="bg-blue-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-900 transition-colors flex items-center gap-2 mx-auto shadow-lg shadow-blue-900/20"
@@ -700,7 +809,7 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                 {/* STYLES FOR PRINT ONLY */}
                 <style jsx global>{`
                     @media print {
-                        @page { size: A4; margin: 20mm; }
+                        @page { size: A4; margin: 15mm; }
                         body * {
                             visibility: hidden;
                         }
@@ -713,6 +822,7 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                             top: 0;
                             width: 100%;
                             font-family: 'Courier New', Courier, monospace;
+                            font-size: 11px;
                         }
                         nav, header, footer, .print\\:hidden {
                             display: none !important;
@@ -797,8 +907,10 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                                 <tr key={t.id} className="border-b border-dashed border-slate-200">
                                     <td className="p-2 whitespace-nowrap">{t.date}</td>
                                     <td className="p-2">{t.description}</td>
-                                    <td className="p-2 text-center uppercase">{t.type === 'income' ? 'IN' : 'OUT'}</td>
-                                    <td className="p-2 text-right font-bold">{formatRupiah(t.amount)}</td>
+                                    <td className={`p-2 text-center uppercase ${t.type === 'income' ? 'font-bold' : ''}`}>
+                                        {t.type === 'income' ? 'IN' : 'OUT'}
+                                    </td>
+                                    <td className="p-2 text-right font-medium">{formatRupiah(t.amount)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -808,8 +920,18 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                 {/* SIGNATURE */}
                 <div className="mt-16 flex justify-end break-inside-avoid text-xs">
                     <div className="text-center w-64">
-                        <p className="mb-16">Bandung, ........................................ <br/> BENDAHARA MPA,</p>
-                        <p className="font-bold border-b border-dashed border-slate-900 inline-block pb-1 min-w-[150px]">( ........................................ )</p>
+                        {/* AUTO DATE HERE */}
+                        <p className="mb-4">Bandung, {reportDate}</p>
+                        <p className="mb-2 font-bold">KETUA MPA HIMAKOM POLBAN,</p>
+                        
+                        {/* SIGNATURE CANVAS */}
+                        <div className="mb-2 flex justify-center">
+                            <SignaturePad />
+                        </div>
+
+                        <p className="font-bold border-b border-dashed border-slate-900 inline-block pb-1 min-w-[200px] uppercase">
+                            Wyandhanu Maulidan Nugraha
+                        </p>
                     </div>
                 </div>
                 
@@ -978,31 +1100,53 @@ export default function App() {
   const [view, setView] = useState('landing'); 
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     if (!auth) return;
-    const initAuth = async () => {
+
+    // Logic baru untuk menangani persistensi login
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        // User logged in (bisa admin atau anonim)
+        setUser(currentUser);
+        const adminStatus = currentUser.email ? true : false;
+        setIsAdmin(adminStatus);
+        
+        // Jika admin, langsung ke dashboard (kecuali logout manual)
+        if (adminStatus) {
+             setView('dashboard');
+        }
+        setAuthLoading(false);
+      } else {
+        // Belum login sama sekali -> Coba login anonim untuk view publik
+        // Cek dulu apakah ada custom token (untuk preview env)
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
              await signInWithCustomToken(auth, __initial_auth_token);
         } else {
              await signInAnonymously(auth);
         }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      const adminStatus = currentUser && currentUser.email ? true : false;
-      setIsAdmin(adminStatus);
-      if (adminStatus) setView('dashboard');
+        // authLoading tetap true sampai listener ini dipanggil lagi dengan user anonim
+      }
     });
     return () => unsubscribe();
   }, []);
 
   const handleLogout = async () => {
     await signOut(auth);
-    await signInAnonymously(auth);
+    // Setelah logout, otomatis sign in anonim agar view publik tetap jalan
+    // onAuthStateChanged akan menangani ini via blok 'else' di atas
     setView('landing');
   };
+
+  // Tampilkan loading screen saat cek status login agar tidak 'flash' ke landing page
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-800"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-900 selection:bg-blue-200 selection:text-blue-900 overflow-x-hidden relative">
