@@ -19,7 +19,10 @@ import {
   PieChart,
   Instagram,
   FileDown, 
-  Printer   
+  Printer,
+  ChevronLeft,
+  ChevronRight,
+  Calendar as CalendarIcon
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -43,7 +46,8 @@ import {
   deleteDoc, 
   serverTimestamp,
   orderBy,
-  where
+  where,
+  getDoc
 } from 'firebase/firestore';
 
 // --- FIREBASE CONFIGURATION ---
@@ -251,7 +255,6 @@ const Header = ({ currentView, setView, isAdmin, handleLogout }) => {
 
 // --- ADMIN FEATURES ---
 
-// 1. DASHBOARD OVERVIEW
 const DashboardOverview = ({ transactions, members }) => {
   const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + Number(curr.amount), 0);
   const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + Number(curr.amount), 0);
@@ -354,21 +357,46 @@ const KasManager = ({ db, appId, user }) => {
   }
 
   const togglePayment = async (memberId, monthIndex) => {
+    const memberName = members.find(m => m.id === memberId)?.name;
     const existing = cashRecords.find(r => r.memberId === memberId && r.monthIndex === monthIndex && r.year === currentYear);
     
     if (existing) {
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cash_records', existing.id));
+        // UNCHECK: Hapus Cash Record DAN Transaksi terkait
+        try {
+            if(existing.transactionId) {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', existing.transactionId));
+            }
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cash_records', existing.id));
+        } catch (e) {
+            console.error("Error reverting payment:", e);
+            alert("Gagal membatalkan pembayaran.");
+        }
     } else {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), {
-            memberId, monthIndex, year: currentYear, paidAt: serverTimestamp()
-        });
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
-            type: 'income',
-            amount: 10000, 
-            description: `Uang Kas Bulan ${months[monthIndex]} - ${members.find(m=>m.id===memberId)?.name}`,
-            date: new Date().toISOString().split('T')[0],
-            category: 'Uang Kas'
-        });
+        // CHECK: Tambah Cash Record DAN Transaksi
+        try {
+            // 1. Buat Transaksi dulu untuk dapat ID
+            const transRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), {
+                type: 'income',
+                amount: 10000, 
+                description: `Uang Kas ${months[monthIndex]} ${currentYear} - ${memberName}`,
+                date: new Date().toISOString().split('T')[0],
+                category: 'Uang Kas',
+                refType: 'cash_auto', // Penanda ini otomatis
+                created_at: serverTimestamp()
+            });
+
+            // 2. Simpan ID Transaksi di Cash Record
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), {
+                memberId, 
+                monthIndex, 
+                year: currentYear, 
+                paidAt: serverTimestamp(),
+                transactionId: transRef.id // LINKING
+            });
+        } catch (e) {
+            console.error("Error processing payment:", e);
+            alert("Gagal memproses pembayaran.");
+        }
     }
   };
 
@@ -410,6 +438,7 @@ const KasManager = ({ db, appId, user }) => {
                                             <button 
                                                 onClick={() => togglePayment(member.id, idx)}
                                                 className={`w-6 h-6 rounded-full border flex items-center justify-center transition-all ${isPaid ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-blue-400'}`}
+                                                title={isPaid ? "Batalkan pembayaran (Hapus Transaksi)" : "Bayar (Catat Transaksi)"}
                                             >
                                                 <div className="w-2 h-2 bg-current rounded-full" />
                                             </button>
@@ -424,17 +453,19 @@ const KasManager = ({ db, appId, user }) => {
                     </tbody>
                 </table>
             </div>
-            <p className="mt-4 text-xs text-slate-400">* Klik lingkaran untuk menandai lunas. Pemasukan otomatis tercatat di transaksi.</p>
+            <p className="mt-4 text-xs text-slate-400">* Klik lingkaran untuk menandai lunas. Pemasukan otomatis tercatat di transaksi. Klik lagi untuk membatalkan (transaksi juga akan terhapus).</p>
         </div>
     </div>
   );
 };
 
-// 3. TRANSAKSI MANAGER (Pemasukan & Pengeluaran)
+// 3. TRANSAKSI MANAGER & CALENDAR
 const TransactionManager = ({ db, appId, user }) => {
   const [transactions, setTransactions] = useState([]);
   const [form, setForm] = useState({ type: 'expense', amount: '', description: '', date: new Date().toISOString().split('T')[0] });
   const [loading, setLoading] = useState(false);
+  const [filterDate, setFilterDate] = useState(null); // Filter by date from calendar
+  const [calendarDate, setCalendarDate] = useState(new Date()); // Current month viewed in calendar
 
   useEffect(() => {
     if (!db || !user) return; 
@@ -457,17 +488,96 @@ const TransactionManager = ({ db, appId, user }) => {
     setLoading(false);
   };
 
-  const deleteTrans = async (id) => {
-      // Fitur Koreksi: Hapus transaksi jika salah input
-      if(window.confirm('Hapus transaksi ini? Saldo akan dikembalikan sesuai jenis transaksi.')) {
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', id));
+  const deleteTrans = async (item) => {
+      // Warning extra if it's an auto-generated cash record
+      const confirmMsg = item.refType === 'cash_auto' 
+        ? 'PERINGATAN: Ini adalah transaksi Uang Kas Otomatis. Menghapusnya di sini TIDAK mengubah status lunas di tabel kas (tidak disarankan). Lanjutkan?'
+        : 'Hapus transaksi ini?';
+
+      if(window.confirm(confirmMsg)) {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', item.id));
       }
   };
 
+  // --- CALENDAR LOGIC ---
+  const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+  const renderCalendar = () => {
+      const year = calendarDate.getFullYear();
+      const month = calendarDate.getMonth();
+      const daysInMonth = getDaysInMonth(year, month);
+      const firstDay = getFirstDayOfMonth(year, month);
+      const days = [];
+
+      // Empty slots
+      for (let i = 0; i < firstDay; i++) {
+          days.push(<div key={`empty-${i}`} className="h-10"></div>);
+      }
+
+      // Days
+      for (let day = 1; day <= daysInMonth; day++) {
+          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const hasTrans = transactions.some(t => t.date === dateStr);
+          const hasIncome = transactions.some(t => t.date === dateStr && t.type === 'income');
+          const hasExpense = transactions.some(t => t.date === dateStr && t.type === 'expense');
+          const isSelected = filterDate === dateStr;
+
+          days.push(
+              <button 
+                key={day} 
+                onClick={() => setFilterDate(isSelected ? null : dateStr)}
+                className={`h-10 w-10 rounded-full flex flex-col items-center justify-center text-sm font-medium transition-all relative
+                    ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-slate-100 text-slate-700'}
+                    ${dateStr === new Date().toISOString().split('T')[0] && !isSelected ? 'border border-blue-200' : ''}
+                `}
+              >
+                  {day}
+                  {hasTrans && (
+                      <div className="flex gap-0.5 mt-0.5">
+                          {hasIncome && <div className="w-1 h-1 rounded-full bg-emerald-500"></div>}
+                          {hasExpense && <div className="w-1 h-1 rounded-full bg-rose-500"></div>}
+                      </div>
+                  )}
+              </button>
+          );
+      }
+      return days;
+  };
+
+  const filteredTransactions = filterDate 
+    ? transactions.filter(t => t.date === filterDate)
+    : transactions;
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-24">
+        {/* Left Col: Calendar & Form */}
+        <div className="lg:col-span-1 space-y-6">
+            {/* Calendar */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2"><CalendarIcon size={18}/> Kalender</h3>
+                    <div className="flex gap-2">
+                        <button onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth()-1, 1))} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft size={16}/></button>
+                        <span className="text-sm font-bold text-slate-600">{calendarDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                        <button onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth()+1, 1))} className="p-1 hover:bg-slate-100 rounded"><ChevronRight size={16}/></button>
+                    </div>
+                </div>
+                <div className="grid grid-cols-7 gap-1 text-center mb-2">
+                    {['M', 'S', 'S', 'R', 'K', 'J', 'S'].map(d => <span key={d} className="text-xs font-bold text-slate-400">{d}</span>)}
+                </div>
+                <div className="grid grid-cols-7 gap-1 justify-items-center">
+                    {renderCalendar()}
+                </div>
+                {filterDate && (
+                    <div className="mt-4 text-center">
+                        <button onClick={() => setFilterDate(null)} className="text-xs text-blue-600 hover:underline">Tampilkan Semua</button>
+                    </div>
+                )}
+            </div>
+
+            {/* Form */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><DollarSign size={20}/> Input Transaksi</h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
@@ -496,44 +606,52 @@ const TransactionManager = ({ db, appId, user }) => {
             </div>
         </div>
 
+        {/* Right Col: List */}
         <div className="lg:col-span-2">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-full flex flex-col">
                 <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800">Riwayat Transaksi</h3>
-                    <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded border border-slate-200">{transactions.length} Data</span>
+                    <h3 className="font-bold text-slate-800">
+                        {filterDate ? `Transaksi Tanggal ${filterDate}` : 'Semua Riwayat Transaksi'}
+                    </h3>
+                    <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded border border-slate-200">{filteredTransactions.length} Data</span>
                 </div>
-                <div className="overflow-y-auto max-h-[600px]">
+                <div className="overflow-y-auto max-h-[800px] flex-1">
                     <table className="w-full text-sm text-left">
-                        <thead className="bg-white text-slate-500 font-bold sticky top-0 shadow-sm">
+                        <thead className="bg-white text-slate-500 font-bold sticky top-0 shadow-sm z-10">
                             <tr>
-                                <th className="p-4">Tanggal</th>
-                                <th className="p-4">Keterangan</th>
-                                <th className="p-4 text-right">Nominal</th>
-                                <th className="p-4 text-center">Aksi</th>
+                                <th className="p-4 bg-slate-50">Tanggal</th>
+                                <th className="p-4 bg-slate-50">Keterangan</th>
+                                <th className="p-4 text-right bg-slate-50">Nominal</th>
+                                <th className="p-4 text-center bg-slate-50">Aksi</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                            {transactions.map(t => (
-                                <tr key={t.id} className="hover:bg-slate-50">
-                                    <td className="p-4 text-slate-500 whitespace-nowrap">{t.date}</td>
-                                    <td className="p-4 font-medium text-slate-800">{t.description}</td>
-                                    <td className={`p-4 text-right font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {filteredTransactions.map(t => (
+                                <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="p-4 text-slate-500 whitespace-nowrap align-top">{t.date}</td>
+                                    <td className="p-4 font-medium text-slate-800 align-top">
+                                        {t.description}
+                                        {t.refType === 'cash_auto' && <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 font-bold">AUTO</span>}
+                                    </td>
+                                    <td className={`p-4 text-right font-bold align-top ${t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                                         {t.type === 'income' ? '+' : '-'} {formatRupiah(t.amount)}
                                     </td>
-                                    <td className="p-4 text-center">
+                                    <td className="p-4 text-center align-top">
                                         <button 
-                                            onClick={() => deleteTrans(t.id)} 
+                                            onClick={() => deleteTrans(t)} 
                                             className="text-slate-300 hover:text-rose-500 transition-colors p-2 hover:bg-rose-50 rounded-full"
-                                            title="Hapus Transaksi (Koreksi Saldo)"
+                                            title="Hapus Transaksi"
                                         >
                                             <Trash2 size={16}/>
                                         </button>
                                     </td>
                                 </tr>
                             ))}
-                            {transactions.length === 0 && (
+                            {filteredTransactions.length === 0 && (
                                 <tr>
-                                    <td colSpan="4" className="p-8 text-center text-slate-400 italic">Belum ada transaksi tercatat.</td>
+                                    <td colSpan="4" className="p-12 text-center text-slate-400 italic">
+                                        {filterDate ? 'Tidak ada transaksi pada tanggal ini.' : 'Belum ada transaksi tercatat.'}
+                                    </td>
                                 </tr>
                             )}
                         </tbody>
@@ -545,7 +663,7 @@ const TransactionManager = ({ db, appId, user }) => {
   );
 };
 
-// 4. REPORT MANAGER (UPDATED: Native Browser Print)
+// 4. REPORT MANAGER (UPDATED: Modern Dot Matrix Style)
 const ReportManager = ({ transactions, members, cashRecords }) => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const currentYear = new Date().getFullYear();
@@ -577,11 +695,12 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
             </div>
 
             {/* REPORT CONTENT (Visible on screen and print) */}
-            <div className="bg-white p-10 rounded-none shadow-none print:p-0 print:shadow-none" id="print-area">
+            <div className="bg-white p-8 rounded-none shadow-none print:p-0 print:shadow-none font-mono text-slate-800" id="print-area">
                 
                 {/* STYLES FOR PRINT ONLY */}
                 <style jsx global>{`
                     @media print {
+                        @page { size: A4; margin: 20mm; }
                         body * {
                             visibility: hidden;
                         }
@@ -593,6 +712,7 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                             left: 0;
                             top: 0;
                             width: 100%;
+                            font-family: 'Courier New', Courier, monospace;
                         }
                         nav, header, footer, .print\\:hidden {
                             display: none !important;
@@ -600,58 +720,56 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                     }
                 `}</style>
 
-                {/* HEADER LAPORAN */}
-                <div className="text-center mb-8 border-b-2 border-slate-800 pb-6">
-                    <h1 className="text-2xl font-bold text-slate-900 uppercase">Laporan Keuangan MPA HIMAKOM POLBAN</h1>
-                    <p className="text-slate-600">Periode Tahun {currentYear}</p>
+                {/* HEADER DOT MATRIX STYLE */}
+                <div className="text-center mb-6 border-b-2 border-dashed border-slate-400 pb-6">
+                    <h1 className="text-xl font-bold tracking-widest uppercase">LAPORAN KEUANGAN</h1>
+                    <h2 className="text-lg font-bold">MPA HIMAKOM POLBAN</h2>
+                    <p className="text-sm mt-2">Periode Tahun {currentYear}</p>
+                    <p className="text-xs text-slate-500 mt-1">Dicetak pada: {new Date().toLocaleString('id-ID')}</p>
                 </div>
 
                 {/* A. RINGKASAN */}
-                <div className="mb-10">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 border-l-4 border-blue-800 pl-3">A. RINGKASAN KEUANGAN</h2>
-                    <table className="w-full text-sm border-collapse border border-slate-300">
-                        <thead className="bg-slate-100">
-                            <tr>
-                                <th className="border border-slate-300 p-3 text-left">Keterangan</th>
-                                <th className="border border-slate-300 p-3 text-right">Jumlah</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td className="border border-slate-300 p-3">Total Pemasukan</td>
-                                <td className="border border-slate-300 p-3 text-right text-emerald-700 font-bold">{formatRupiah(income)}</td>
-                            </tr>
-                            <tr>
-                                <td className="border border-slate-300 p-3">Total Pengeluaran</td>
-                                <td className="border border-slate-300 p-3 text-right text-rose-700 font-bold">{formatRupiah(expense)}</td>
-                            </tr>
-                            <tr className="bg-slate-50 font-bold">
-                                <td className="border border-slate-300 p-3">Saldo Akhir</td>
-                                <td className="border border-slate-300 p-3 text-right text-blue-800">{formatRupiah(income - expense)}</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div className="mb-8">
+                    <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full flex justify-between">
+                        <span>A. RINGKASAN</span>
+                        <span>[ SUMMARY ]</span>
+                    </h2>
+                    <div className="grid grid-cols-2 gap-4 text-sm max-w-md">
+                        <div className="flex justify-between">
+                            <span>TOTAL PEMASUKAN</span>
+                            <span className="font-bold">{formatRupiah(income)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>TOTAL PENGELUARAN</span>
+                            <span className="font-bold">{formatRupiah(expense)}</span>
+                        </div>
+                        <div className="col-span-2 border-t border-dashed border-slate-300 my-1"></div>
+                        <div className="flex justify-between col-span-2 text-lg">
+                            <span className="font-bold">SALDO AKHIR</span>
+                            <span className="font-bold">{formatRupiah(income - expense)}</span>
+                        </div>
+                    </div>
                 </div>
 
                 {/* B. REKAP KAS */}
-                <div className="mb-10 break-inside-avoid">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 border-l-4 border-blue-800 pl-3">B. REKAPITULASI UANG KAS</h2>
-                    <table className="w-full text-[10px] border-collapse border border-slate-300">
-                        <thead className="bg-slate-100">
-                            <tr>
-                                <th className="border border-slate-300 p-2 text-left">Nama Anggota</th>
-                                {months.map(m => <th key={m} className="border border-slate-300 p-2 text-center">{m}</th>)}
+                <div className="mb-8 break-inside-avoid">
+                    <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full">B. DATA UANG KAS</h2>
+                    <table className="w-full text-[10px] border-collapse">
+                        <thead>
+                            <tr className="border-b border-dashed border-slate-400">
+                                <th className="p-1 text-left">NAMA</th>
+                                {months.map(m => <th key={m} className="p-1 text-center">{m}</th>)}
                             </tr>
                         </thead>
                         <tbody>
                             {members.map(m => (
-                                <tr key={m.id}>
-                                    <td className="border border-slate-300 p-2 font-medium">{m.name}</td>
+                                <tr key={m.id} className="border-b border-slate-100">
+                                    <td className="p-1 font-bold">{m.name}</td>
                                     {months.map((_, idx) => {
                                         const isPaid = cashRecords.some(r => r.memberId === m.id && r.monthIndex === idx);
                                         return (
-                                            <td key={idx} className="border border-slate-300 p-1 text-center">
-                                                {isPaid ? <span className="text-green-600 font-bold">✓</span> : <span className="text-slate-300">-</span>}
+                                            <td key={idx} className="p-1 text-center font-bold">
+                                                {isPaid ? 'X' : '.'}
                                             </td>
                                         );
                                     })}
@@ -659,29 +777,28 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                             ))}
                         </tbody>
                     </table>
+                    <p className="text-[10px] mt-1 italic text-slate-500">* Tanda 'X' berarti lunas.</p>
                 </div>
 
                 {/* C. JURNAL */}
-                <div className="mb-10">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 border-l-4 border-blue-800 pl-3">C. JURNAL TRANSAKSI LENGKAP</h2>
-                    <table className="w-full text-xs border-collapse border border-slate-300">
-                        <thead className="bg-slate-100">
-                            <tr>
-                                <th className="border border-slate-300 p-2 text-left">Tanggal</th>
-                                <th className="border border-slate-300 p-2 text-left">Keterangan</th>
-                                <th className="border border-slate-300 p-2 text-center">Jenis</th>
-                                <th className="border border-slate-300 p-2 text-right">Nominal</th>
+                <div className="mb-8">
+                    <h2 className="text-md font-bold mb-2 uppercase border-b border-dashed border-slate-300 pb-1 w-full">C. RIWAYAT TRANSAKSI</h2>
+                    <table className="w-full text-[10px] border-collapse">
+                        <thead>
+                            <tr className="border-b-2 border-slate-800">
+                                <th className="p-2 text-left">TANGGAL</th>
+                                <th className="p-2 text-left">KETERANGAN</th>
+                                <th className="p-2 text-center">JENIS</th>
+                                <th className="p-2 text-right">NOMINAL</th>
                             </tr>
                         </thead>
                         <tbody>
                             {transactions.map(t => (
-                                <tr key={t.id}>
-                                    <td className="border border-slate-300 p-2 whitespace-nowrap">{t.date}</td>
-                                    <td className="border border-slate-300 p-2">{t.description}</td>
-                                    <td className={`border border-slate-300 p-2 text-center font-bold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                                        {t.type === 'income' ? 'Masuk' : 'Keluar'}
-                                    </td>
-                                    <td className="border border-slate-300 p-2 text-right font-medium">{formatRupiah(t.amount)}</td>
+                                <tr key={t.id} className="border-b border-dashed border-slate-200">
+                                    <td className="p-2 whitespace-nowrap">{t.date}</td>
+                                    <td className="p-2">{t.description}</td>
+                                    <td className="p-2 text-center uppercase">{t.type === 'income' ? 'IN' : 'OUT'}</td>
+                                    <td className="p-2 text-right font-bold">{formatRupiah(t.amount)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -689,11 +806,15 @@ const ReportManager = ({ transactions, members, cashRecords }) => {
                 </div>
 
                 {/* SIGNATURE */}
-                <div className="mt-20 flex justify-end break-inside-avoid">
+                <div className="mt-16 flex justify-end break-inside-avoid text-xs">
                     <div className="text-center w-64">
-                        <p className="mb-20">Bandung, ........................................ <br/> Bendahara MPA,</p>
-                        <p className="font-bold border-b border-slate-900 inline-block pb-1 min-w-[200px]">( ........................................ )</p>
+                        <p className="mb-16">Bandung, ........................................ <br/> BENDAHARA MPA,</p>
+                        <p className="font-bold border-b border-dashed border-slate-900 inline-block pb-1 min-w-[150px]">( ........................................ )</p>
                     </div>
+                </div>
+                
+                <div className="text-[8px] text-center mt-10 text-slate-400 border-t border-slate-200 pt-2">
+                    --- DOKUMEN INI DIHASILKAN SECARA OTOMATIS OLEH SIKEU MPA ---
                 </div>
 
             </div>
@@ -712,7 +833,7 @@ const AdminDashboard = ({ db, appId, user }) => {
     if (!db || !user) return; 
     
     const qT = query(collection(db, 'artifacts', appId, 'public', 'data', 'transactions'), orderBy('date', 'desc'));
-    const unsubT = onSnapshot(qT, (snap) => setTransactions(snap.docs.map(d => d.data())), (err) => console.log("Waiting..."));
+    const unsubT = onSnapshot(qT, (snap) => setTransactions(snap.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.log("Waiting..."));
     
     const qM = query(collection(db, 'artifacts', appId, 'public', 'data', 'members'), orderBy('name'));
     const unsubM = onSnapshot(qM, (snap) => setMembers(snap.docs.map(d => ({id:d.id, ...d.data()}))), (err) => console.log("Waiting..."));
@@ -720,7 +841,7 @@ const AdminDashboard = ({ db, appId, user }) => {
     // Need cash records for the report too
     const currentYear = new Date().getFullYear();
     const qC = query(collection(db, 'artifacts', appId, 'public', 'data', 'cash_records'), where('year', '==', currentYear));
-    const unsubC = onSnapshot(qC, (snap) => setCashRecords(snap.docs.map(d => d.data())), (err) => console.log("Waiting..."));
+    const unsubC = onSnapshot(qC, (snap) => setCashRecords(snap.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.log("Waiting..."));
 
     return () => { unsubT(); unsubM(); unsubC(); };
   }, [db, user]);
